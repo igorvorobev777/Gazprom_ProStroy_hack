@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package ml.v1;
+
+// gRPC-контракт RAG-сервиса.
+// (тому самому adaptive RAG пайплайну — naive/corrective/multi-agent).
+service MLGatewayService {
+  rpc Query (QueryRequest) returns (stream QueryChunk);
+  rpc SyncKnowledgeBase (SyncRequest) returns (SyncResponse);
+  rpc GetSyncStatus (SyncStatusRequest) returns (SyncStatus);
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message QueryRequest {
+  string trace_id = 1;   // пробрасывается сквозь весь запрос для замера latency по этапам
+  string query = 2;
+  int32 top_k = 3;
+  int32 section_id = 4; // 0 = все разделы
+}
+
+message SourceItem {
+  string doc_id = 1;
+  string title = 2;
+  string url = 3;
+  float score = 4;
+}
+
+message QueryChunk {
+  oneof payload {
+    string token = 1;
+    RouteInfo route_info = 2;
+    FinalResult final = 3;
+  }
+}
+
+message RouteInfo {
+  string route_type = 1; // naive | corrective | multi_agent
+}
+
+message FinalResult {
+  string answer = 1;
+  repeated SourceItem sources = 2;
+  string route_type = 3;
+  int64 latency_ms = 4;
+}
+
+message SyncRequest {}
+
+message SyncResponse {
+  string job_id = 1;
+  string status = 2;
+}
+
+message SyncStatusRequest {
+  string job_id = 1;
+}
+
+message SyncStatus {
+  string job_id = 1;
+  string status = 2;
+  int32 processed_docs = 3;
+  int32 total_docs = 4;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string llm_status = 2;
+  string vector_store_status = 3;
+}

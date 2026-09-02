@@ -1,1 +1,0 @@
-# Gazprom_ProStroy_hack
