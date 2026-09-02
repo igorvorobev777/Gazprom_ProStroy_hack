@@ -1,237 +1,602 @@
-🏆 TOP-3 ЛУЧШИХ РЕШЕНИЙ ХАКАТОНА ГАЗПРОМА «КЕЙС-ЧЕМПИОНАТ PRO СТРОЙ 4.0»
+# ProStroy RAG
 
-Unified Adaptive RAG Service for Corporate Knowledge Base
-Production-oriented RAG-сервис для интеллектуального поиска и генерации ответов по корпоративной базе знаний.
+### Intelligent Construction Knowledge Assistant
 
-Python | RAG | Qwen3 | llama.cpp | gRPC | scikit-learn
+**RAG-система для поиска и генерации ответов по специализированной строительной базе знаний.**
 
-Этот репозиторий содержит RAG/ML-сервис, разработанный как часть командного решения для хакатона Газпрома. Командное решение вошло в Top-3 лучших решений чемпионата, доказав свою эффективность в условиях строгих требований к latency, качеству ответов и локальной работе без внешних API.
+Проект разработан в рамках кейс-чемпионата Газпрома **«PRO СТРОЙ 4.0»**. Командное решение вошло в **Top-3 лучших решений чемпионата**.
 
-О проекте
-Проект представляет собой локальный Retrieval-Augmented Generation (RAG) сервис для работы с корпоративной базой знаний. Система получает документы из HiHub, строит локальный индекс, находит релевантные фрагменты по пользовательскому запросу и формирует ответ с привязкой к источникам.
+---
 
-Основной акцент был сделан не только на качестве retrieval, но и на практической эксплуатации модели:
-- hybrid retrieval вместо одного способа поиска;
-- reranking и дополнительные lexical-сигналы;
-- адаптивное формирование контекста для LLM;
-- контроль hallucinations через quality gate и grounding checks;
-- fallback без генерации, если LLM недоступна или ответ нельзя надёжно подтвердить;
-- ограничение latency и динамический token budget;
-- безопасное обновление индекса без потери рабочей версии;
-- gRPC-интерфейс для интеграции с backend-сервисом;
-- диагностика latency каждого этапа RAG pipeline.
+## О проекте
 
-Таким образом, проект ближе к production ML/NLP service, чем к классическому notebook-прототипу.
+В строительной отрасли значительная часть знаний хранится в документации: регламентах, технических материалах, нормативных документах и внутренних базах знаний.
 
-Задача
-В корпоративных базах знаний информация обычно распределена по множеству инструкций, регламентов и внутренних документов. Обычный keyword search требует от пользователя знать точную формулировку и самостоятельно просматривать найденные документы.
+При работе с такими источниками обычного полнотекстового поиска часто недостаточно:
 
-Цель RAG-сервиса — предоставить единый интерфейс, который:
-1. Принимает вопрос на естественном языке;
-2. Определяет поисковые формулировки;
-3. Находит наиболее релевантные части документов;
-4. Отбрасывает слабый или противоречивый контекст;
-5. Передаёт компактный набор фактов в LLM;
-6. Генерирует ответ только на основании найденных источников;
-7. Возвращает пользователю ответ и ссылки на документы.
+- пользователь может сформулировать запрос иначе, чем написано в документе;
+- нужная информация может находиться сразу в нескольких фрагментах;
+- документы содержат большое количество близких по смыслу терминов;
+- LLM без контроля источников может генерировать правдоподобный, но неверный ответ.
 
-Пример пользовательского запроса: "Какой срок действия наряда-допуска?"
-Вместо поиска по десяткам документов пользователь получает краткий ответ, сформированный по найденным фрагментам базы знаний, вместе с источниками.
+Цель проекта — построить систему, которая не просто отправляет найденный текст в LLM, а управляет всем процессом получения ответа:
 
-Архитектура
-Поток запроса:
-Query
-  -> query planning / normalization
-  -> hybrid retrieval
-       -> vector search (Hashing / SentenceTransformers)
-       -> sparse TF-IDF search
-  -> Reciprocal Rank Fusion (RRF)
-  -> lexical reranking
-  -> neighbor chunk expansion
-  -> context selection
-  -> quality gate
-  -> Qwen3 generation (via llama.cpp)
-  -> grounding / relevance validation
-  -> sources resolution
-  -> gRPC stream response
+**поиск → объединение кандидатов → reranking → формирование контекста → генерация → проверка ответа → fallback при низкой уверенности.**
 
-Что реализовано
-1. Hybrid Retrieval
-Retrieval объединяет несколько независимых сигналов поиска.
-Vector channel: по умолчанию используется быстрый CPU-friendly HashingVectorizer (word n-grams 1-2, character n-grams 3-5). Также поддерживается полноценный embedding backend на базе sentence-transformers.
-Sparse channel: для отдельного sparse-индекса используется TF-IDF через FeatureUnion (word TF-IDF 1-2 grams, character TF-IDF 3-5 grams). Это помогает учитывать точные термины, русскую морфологию, опечатки и аббревиатуры.
+---
 
-2. Reciprocal Rank Fusion и reranking
-Результаты dense/vector и sparse retrieval объединяются через Reciprocal Rank Fusion (RRF). Дополнительно учитываются: lexical coverage запроса, совпадения с заголовком, близость query-term друг к другу внутри chunk, document-level affinity и штрафы за нерелевантные блоки.
+## Что получилось
 
-3. Neighbor Expansion
-Если найден релевантный chunk, retrieval может добавить соседние chunks того же документа, уменьшая вероятность потери важной информации на границах разбиения.
+Вместо классической схемы:
 
-4. Adaptive Context Selection
-Перед отправкой текста в LLM найденные фрагменты обрабатываются: удаляются дубли, выбираются наиболее информативные passages, ограничивается общий размер контекста. Предусмотрены профили запросов: fact (короткий контекст), default (средний), procedure (больше контекста).
+```text
+Question
+   ↓
+Vector Search
+   ↓
+LLM
+   ↓
+Answer
+```
 
-5. Quality Gate
-До генерации система оценивает качество найденных evidence (strong / borderline / weak). Если evidence недостаточно надёжный, система не заставляет LLM «додумывать» ответ, а использует уточняющий вопрос или extractive fallback.
+в проекте реализован полноценный retrieval pipeline:
 
-6. Grounding Guard
-После генерации ответ проверяется на соответствие retrieved context: coverage утверждений источниками, отсутствие выдуманных чисел/сущностей, наличие корректных source markers.
+```text
+                    ┌─────────────────┐
+                    │   User Query    │
+                    └────────┬────────┘
+                             │
+                             ▼
+                ┌───────────────────────┐
+                │   Hybrid Retrieval    │
+                │                       │
+                │  Semantic + Lexical   │
+                └───────────┬───────────┘
+                            │
+                            ▼
+                ┌───────────────────────┐
+                │ Candidate Fusion / RRF│
+                └───────────┬───────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │    Reranking    │
+                   └────────┬────────┘
+                            │
+                            ▼
+                ┌───────────────────────┐
+                │ Adaptive Context      │
+                │ Selection             │
+                └───────────┬───────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │      LLM        │
+                   └────────┬────────┘
+                            │
+                            ▼
+              ┌───────────────────────────┐
+              │ Answer Quality Validation │
+              └────────────┬──────────────┘
+                           │
+              ┌────────────┴─────────────┐
+              │                          │
+              ▼                          ▼
+        Valid Answer              Corrective Retrieval
+              │                          │
+              │                          ▼
+              │                  Extractive Fallback
+              │                          │
+              └────────────┬─────────────┘
+                           ▼
+                       Response
+```
 
-7. Answer Relevance Guard
-Отдельная проверка контролирует, действительно ли сгенерированный ответ отвечает на исходный вопрос, а не просто пересказывает найденный документ.
+Основная идея системы — **не доверять одному retrieval-механизму и не считать каждый сгенерированный LLM ответ корректным автоматически**.
 
-8. Corrective Retrieval
-Если первый набор документов недостаточен, pipeline поддерживает переформулирование поисковых запросов и повторный поиск.
+---
 
-9. Extractive Fallback
-Если LLM не успела ответить в SLA, недоступна или не прошла валидацию, сервис возвращает extractive answer непосредственно из retrieved passages.
+# Ключевые компоненты
 
-10. Latency-aware inference
-Система рассчитана на локальный CPU inference: hard request deadline (23.5s), отдельный budget для LLM, адаптивный max_tokens, prompt cache, EMA-оценка реальной скорости llama.cpp.
+## 1. Hybrid Retrieval
 
-11. Safe Knowledge Base Sync
-Индекс строится во временной директории и только после успешной сборки атомарно заменяет предыдущую версию. Если пересборка завершится ошибкой, рабочий индекс остаётся доступным.
+Поиск строится сразу по нескольким сигналам.
 
-ML / NLP Stack
-- Language: Python 3.10-3.13
-- RAG orchestration: custom Python pipeline
-- LLM: Qwen3-4B-RAG
-- Local inference: llama.cpp
-- LLM API: OpenAI-compatible HTTP API
-- Dense/vector representation: HashingVectorizer / SentenceTransformers
-- Sparse retrieval: TF-IDF, word + char n-grams (scikit-learn)
-- Fusion: Reciprocal Rank Fusion
-- Reranking: lexical reranking / optional CrossEncoder
-- Validation: Pydantic, pydantic-settings
-- Service communication: gRPC + Protocol Buffers
-- Knowledge source: HiHub
+Используются:
 
-Структура проекта
-Gazprom_ProStroy_hack/
-├── src/
-│   └── rag_app/                 # Инфраструктурный слой RAG-сервиса
-│       ├── grpc_main.py         # Entry point gRPC-сервера
-│       ├── grpc_service.py      # gRPC API, health check и sync
-│       ├── composition.py       # Сборка зависимостей приложения
-│       └── ...                  # Модули retrieval, embeddings, chunking
-├── proto/                       # gRPC Protobuf спецификации (ml.proto)
-├── data/                        # Runtime index хранится в data/index/
-├── scripts/                     # Вспомогательные утилиты (check_hihub, build_index)
-├── .env.example                 # Пример runtime-конфигурации
-├── pyproject.toml               # Конфигурация Python package (unified-adaptive-rag)
-├── requirements.txt             # Основные зависимости
-├── requirements-models.txt      # Опциональные embedding/reranking модели
-├── setup.ps1                    # Создание venv и установка зависимостей
-├── run_rag.ps1                  # Запуск RAG gRPC service
-├── run_llama_cpu_stable.ps1     # Стабильный CPU запуск llama.cpp + Qwen3
-├── autotune_llama_cpu.ps1       # Подбор CPU-параметров llama.cpp
-├── diagnose_llama.ps1           # Диагностика локальной LLM
-├── test_query.py                # Набор end-to-end тестовых gRPC запросов
+- семантический поиск;
+- лексический поиск;
+- объединение результатов нескольких retrieval-механизмов.
+
+Такой подход особенно полезен для технической документации.
+
+Например, semantic search лучше работает с запросами, сформулированными естественным языком, а lexical retrieval помогает сохранить точность для:
+
+- профессиональных терминов;
+- обозначений;
+- сокращений;
+- названий технологий;
+- специфичных формулировок из документации.
+
+---
+
+## 2. Reciprocal Rank Fusion
+
+Результаты разных retrieval-механизмов необходимо объединить в единый список.
+
+Для этого используется **Reciprocal Rank Fusion (RRF)**.
+
+Вместо прямого сравнения similarity score разных поисковых систем учитывается позиция документа в каждой выдаче.
+
+Это позволяет агрегировать результаты разных retriever'ов без необходимости приводить их score к единой шкале.
+
+---
+
+## 3. Reranking
+
+Первичный retrieval ориентирован на высокий recall — важно не потерять потенциально полезные документы.
+
+После формирования набора кандидатов выполняется дополнительное ранжирование.
+
+```text
+Large candidate set
+        ↓
+    Reranking
+        ↓
+Small high-quality context
+```
+
+В LLM передаются уже наиболее релевантные фрагменты.
+
+Это помогает:
+
+- уменьшить шум в prompt;
+- повысить relevance контекста;
+- снизить количество лишних токенов;
+- улучшить качество итоговой генерации.
+
+---
+
+## 4. Adaptive Context Selection
+
+Количество документов в контексте не фиксировано жестко.
+
+Система анализирует найденные результаты и формирует контекст в зависимости от качества retrieval.
+
+Это особенно важно для RAG, потому что:
+
+> больше контекста ≠ лучше ответ.
+
+Если передать модели слишком много слабосвязанных документов, полезная информация начинает конкурировать с шумом.
+
+---
+
+## 5. Controlled Generation
+
+Для генерации ответа используется локальная LLM.
+
+В проекте предусмотрена работа с:
+
+**Qwen3-4B + llama.cpp**
+
+Такой подход позволяет запускать inference локально и не зависеть от внешнего LLM API.
+
+```text
+Retrieved Knowledge
+        +
+    User Query
+        ↓
+   Prompt Builder
+        ↓
+      Qwen
+        ↓
+Generated Answer
+```
+
+---
+
+## 6. Quality Gate
+
+Генерация ответа — не последний этап pipeline.
+
+После LLM выполняется дополнительная проверка качества результата.
+
+Система оценивает, насколько ответ:
+
+- связан с вопросом;
+- соответствует найденному контексту;
+- содержит достаточное основание в базе знаний.
+
+Таким образом, LLM рассматривается не как источник истины, а как один из компонентов системы.
+
+---
+
+## 7. Grounding Guard
+
+Одна из главных проблем RAG-систем — hallucinations.
+
+Модель может сформировать логичный ответ, который плохо подтверждается найденными документами.
+
+Для снижения этого риска в pipeline присутствует отдельная проверка **grounding**.
+
+Идея:
+
+```text
+LLM Answer
+    ↓
+Is the answer supported
+by retrieved context?
+    ↓
+ YES        NO
+  │          │
+  ▼          ▼
+Return     Recovery
+answer      logic
+```
+
+---
+
+## 8. Corrective Retrieval
+
+Если качество первоначального retrieval недостаточно, система может выполнить дополнительный поисковый проход.
+
+Вместо генерации ответа на слабом контексте pipeline пытается получить более качественные источники.
+
+Это делает архитектуру ближе к **Corrective RAG**, чем к обычному naive RAG.
+
+---
+
+## 9. Extractive Fallback
+
+Если система не может уверенно сформировать генеративный ответ, предусмотрен fallback-механизм.
+
+Вместо потенциальной галлюцинации можно вернуть информацию, непосредственно извлеченную из найденного контекста.
+
+Для knowledge-intensive систем подобное поведение предпочтительнее, чем генерация ответа любой ценой.
+
+---
+
+# Retrieval vs Generation
+
+Архитектура проекта построена вокруг важного принципа:
+
+```text
+качество RAG ≠ качество LLM
+```
+
+Даже сильная языковая модель не сможет дать надежный ответ, если retrieval передал неправильный контекст.
+
+Поэтому значительная часть логики проекта находится **до LLM**:
+
+```text
+                 RAG PIPELINE
+
+              ┌──────────────┐
+              │    Query     │
+              └──────┬───────┘
+                     │
+        ┌────────────┴────────────┐
+        ▼                         ▼
+ Semantic Retrieval       Lexical Retrieval
+        │                         │
+        └────────────┬────────────┘
+                     ▼
+                 Fusion
+                     │
+                     ▼
+                 Reranker
+                     │
+                     ▼
+            Context Selection
+                     │
+                     ▼
+                    LLM
+                     │
+                     ▼
+              Quality Checks
+```
+
+---
+
+# Надежное обновление базы знаний
+
+RAG-система должна уметь работать с изменяющимися данными.
+
+В проекте предусмотрено обновление поискового индекса без разрушения текущей рабочей версии.
+
+Новая версия индекса сначала строится отдельно.
+
+```text
+Current Index
+     │
+     │             New documents
+     │                   │
+     │                   ▼
+     │             Build New Index
+     │                   │
+     │              validation
+     │                   │
+     │                   ▼
+     └────────────► Atomic Swap
+```
+
+Если построение новой версии завершается ошибкой, рабочий индекс остается доступным.
+
+Это позволяет избежать ситуации, когда неудачное обновление knowledge base делает весь сервис недоступным.
+
+---
+
+# Observability
+
+Для анализа производительности собираются timing-данные отдельных этапов pipeline.
+
+Это позволяет видеть, где именно возникает latency:
+
+```text
+retrieval
+    ↓
+reranking
+    ↓
+context building
+    ↓
+LLM inference
+    ↓
+validation
+```
+
+Для ML-сервиса это особенно полезно, потому что общая задержка складывается сразу из нескольких независимых компонентов.
+
+Также сервис поддерживает health check для контроля состояния приложения.
+
+---
+
+# Сервисная архитектура
+
+RAG реализован как отдельный сервис и может использоваться другими компонентами системы.
+
+Для взаимодействия используется **gRPC**.
+
+Это отделяет ML-логику от клиентского приложения:
+
+```text
+┌────────────────────┐
+│ Application / UI   │
+└─────────┬──────────┘
+          │
+         gRPC
+          │
+          ▼
+┌────────────────────┐
+│    RAG Service     │
+│                    │
+│ Retrieval          │
+│ Reranking          │
+│ Generation         │
+│ Validation         │
+└─────────┬──────────┘
+          │
+          ▼
+┌────────────────────┐
+│  Knowledge Base    │
+└────────────────────┘
+```
+
+---
+
+# Technology Stack
+
+### Machine Learning / NLP
+
+- Python
+- Retrieval-Augmented Generation
+- Embeddings
+- Vector Search
+- TF-IDF
+- Hybrid Search
+- Reciprocal Rank Fusion
+- Reranking
+- Local LLM inference
+
+### LLM
+
+- Qwen3-4B
+- llama.cpp
+
+### Backend
+
+- gRPC
+- Protocol Buffers
+
+### Engineering
+
+- atomic index updates
+- health checks
+- latency measurements
+- asynchronous knowledge-base synchronization
+- fallback mechanisms
+
+---
+
+# Структура проекта
+
+```text
+.
+├── app/                    # Основная логика приложения
+│
+├── rag/                    # RAG pipeline
+│   ├── retrieval           # Поиск кандидатов
+│   ├── reranking           # Повторное ранжирование
+│   ├── context             # Формирование контекста
+│   ├── generation          # Работа с LLM
+│   └── validation          # Проверка качества ответа
+│
+├── proto/                  # gRPC / protobuf contracts
+│
+├── data/                   # Данные / knowledge base
+│
+├── config/                 # Конфигурация сервиса
+│
 └── README.md
+```
 
-gRPC API
-Сервис реализует контракт ml.v1.MLGatewayService.
-Доступные методы:
-- Query: Получить RAG-ответ на пользовательский вопрос (stream)
-- SyncKnowledgeBase: Запустить обновление knowledge base
-- GetSyncStatus: Проверить состояние задачи синхронизации
-- HealthCheck: Проверить состояние LLM и локального индекса
+> Фактическая структура отдельных каталогов может зависеть от конфигурации запуска.
 
-Query Request:
-message QueryRequest {
-  string trace_id = 1;
-  string query = 2;
-  int32 top_k = 3;
-  int32 section_id = 4;
-}
-Ответ возвращается stream-сообщениями (токены) и завершается FinalResult (answer, sources, route_type, latency_ms).
+---
 
-Быстрый запуск
-Требования:
-- Windows 10/11
-- Python 3.11+
-- llama.cpp с доступной командой llama-server
-- Локальная GGUF-модель (например, Qwen3-4B-Q4_K_M.gguf)
-- Доступ к HiHub API
+# Pipeline запроса
 
-1. Клонирование проекта:
-git clone https://github.com/igorvorobev777/Gazprom_ProStroy_hack.git
-cd Gazprom_ProStroy_hack
+Полный жизненный цикл пользовательского запроса:
 
-2. Установка Python-зависимостей:
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\setup.ps1
-(Скрипт создаст .venv, установит зависимости и проект в editable mode)
+```text
+1. Query preprocessing
+          ↓
+2. Semantic retrieval
+          ↓
+3. Lexical retrieval
+          ↓
+4. Candidate fusion
+          ↓
+5. Reranking
+          ↓
+6. Context selection
+          ↓
+7. Prompt construction
+          ↓
+8. LLM inference
+          ↓
+9. Relevance / grounding validation
+          ↓
+10. Corrective retrieval or fallback
+          ↓
+11. Final response
+```
 
-3. Настройка окружения:
-Copy-Item .env.example .env
-Заполните HiHub credentials в .env:
-HIHUB_BASE_URL=https://hihub.ru
-HIHUB_EMAIL=<email>
-HIHUB_PASSWORD=<password>
-# или HIHUB_TOKEN_NAME=<token>
+---
 
-Проверьте настройки LLM:
-LLM_BASE_URL=http://127.0.0.1:1234/v1
-LLM_MODEL=qwen3-4b-rag
-GRPC_HOST=0.0.0.0
-GRPC_PORT=50052
+# Почему не обычный Vector Search + LLM
 
-4. Проверка HiHub и построение индекса:
-.\.venv\Scripts\Activate.ps1
-python -m scripts.check_hihub
-python -m scripts.build_index --force
+Наивная RAG-архитектура проста:
 
-5. Запуск Qwen3 через llama.cpp:
-.\run_llama_cpu_stable.ps1
-(или .\autotune_llama_cpu.ps1 для авто-тюнинга под ваше железо)
+```python
+docs = vector_db.search(query)
 
-6. Запуск RAG-сервиса (во втором окне PowerShell):
-.\run_rag.ps1
-Сервис будет доступен на 0.0.0.0:50052
+answer = llm.generate(
+    question=query,
+    context=docs
+)
+```
 
-Проверка работы
-End-to-end gRPC запросы:
-В репозитории есть готовый тестовый клиент с реалистичными корпоративными запросами (Устав, Отпуск, IT-поддержка, Пожарная безопасность):
-python test_query.py
-Он отправляет вопросы в RAG и выводит generated answer, source title и source URL.
+Но у такого подхода есть несколько проблем.
 
-Другие утилиты:
-- python -m scripts.quality_probe "Ваш вопрос" (проверка retrieval без полной генерации)
-- python -m scripts.llm_profile (диагностика производительности LLM)
+### Retrieval failure
 
-Конфигурация retrieval
-Основные параметры вынесены в .env. Пример:
-CHUNK_SIZE_CHARS=1400
-CHUNK_OVERLAP_CHARS=180
-EMBEDDING_BACKEND=hashing
-DENSE_TOP_K=60
-SPARSE_TOP_K=80
-RERANK_CANDIDATE_K=80
-RERANKER_BACKEND=rrf
-LEXICAL_RERANK_ENABLED=true
-NEIGHBOR_EXPANSION_ENABLED=true
-FOCUSED_PASSAGES_ENABLED=true
-MAX_CONTEXT_CHARS=1500
+Если нужный документ не попал в top-k, LLM уже не сможет восстановить отсутствующую информацию.
 
-Для semantic embeddings можно установить дополнительные зависимости:
-pip install -r requirements-models.txt
-и переключить backend в .env:
-EMBEDDING_BACKEND=sentence_transformers
+### Context noise
 
-Quality & Hallucination Control
-Одна из ключевых частей проекта — отказ от стратегии «LLM всегда должна что-то ответить».
-retrieval -> quality gate
-  -> strong: generation
-  -> borderline: restricted generation / fallback
-  -> weak: clarification / insufficient context
+Не все документы из top-k одинаково полезны.
 
-После generation дополнительно выполняются: format validation -> grounding guard -> relevance guard -> source resolution. Если ответ не проходит проверки, pipeline переходит к extractive fallback.
+### Hallucinations
 
-Наблюдаемость и диагностика
-Каждый запрос получает trace_id. FinalResult содержит детальную диагностику: latency_ms, route_type, retrieval_attempts, rewritten_queries и тайминги отдельных стадий. Это позволяет анализировать bottleneck-и inference pipeline.
+LLM может использовать собственные знания вместо переданного контекста.
 
-Результат хакатона
-Для проекта было важным практическим ограничением: система должна была не только демонстрировать идею RAG, но и интегрироваться с backend, работать локально, отвечать в заданном latency budget и устойчиво обрабатывать ситуацию, когда в базе знаний нет достаточного ответа. Именно этот production-ready подход позволил решению занять призовое место.
+### Score incompatibility
 
-Ключевые идеи проекта:
-Hybrid Retrieval + Adaptive Context + Local Qwen3 + Quality Gate + Grounding Validation + gRPC Integration = Production-oriented RAG Service
+Результаты разных search-механизмов нельзя всегда корректно объединять простым сравнением score.
+
+### Failed generation
+
+Даже при хорошем контексте генеративный ответ может оказаться недостаточно grounded.
+
+Поэтому в проекте retrieval и generation рассматриваются как отдельные этапы, каждый из которых требует контроля качества.
+
+---
+
+# Запуск
+
+Клонирование проекта:
+
+```bash
+git clone https://github.com/microPchel/ProStroy-RAG-Intelligent-Construction-Knowledge-Assistant.git
+
+cd ProStroy-RAG-Intelligent-Construction-Knowledge-Assistant
+```
+
+Создание виртуального окружения:
+
+```bash
+python -m venv .venv
+```
+
+Linux / macOS:
+
+```bash
+source .venv/bin/activate
+```
+
+Windows:
+
+```powershell
+.venv\Scripts\activate
+```
+
+Установка зависимостей:
+
+```bash
+pip install -r requirements.txt
+```
+
+Далее необходимо подготовить используемую локальную LLM и указать необходимые параметры конфигурации сервиса.
+
+> Большие веса моделей не должны храниться непосредственно в Git-репозитории.
+
+---
+
+# Что было важно в этом проекте
+
+Проект позволил поработать не только с использованием LLM, но и с задачами, которые возникают вокруг модели в реальной системе:
+
+- retrieval quality;
+- ranking;
+- hybrid search;
+- управление контекстом;
+- hallucination mitigation;
+- local inference;
+- reliability;
+- latency;
+- обновление индекса;
+- взаимодействие ML-сервиса с другими компонентами системы.
+
+В результате получилась не отдельная LLM-функция, а самостоятельный **RAG-сервис с контролируемым retrieval и generation pipeline**.
+
+---
+
+# Результат
+
+Проект был разработан в рамках кейс-чемпионата Газпрома:
+
+## PRO СТРОЙ 4.0
+
+Командное решение заняло место в:
+
+# TOP-3
+
+лучших решений чемпионата.
+
+В данном репозитории представлен RAG / ML-компонент решения.
+
+---
+
+## Основные ML-концепции проекта
+
+`RAG` · `LLM` · `NLP` · `Information Retrieval` · `Hybrid Search` · `Vector Search` · `TF-IDF` · `Reranking` · `RRF` · `Grounding` · `Corrective Retrieval` · `Local LLM` · `gRPC`
+
+---
+
+## Repository
+
+```text
+ProStroy-RAG-Intelligent-Construction-Knowledge-Assistant
+```
+
+**Top-3 solution — Gazprom PRO СТРОЙ 4.0**
